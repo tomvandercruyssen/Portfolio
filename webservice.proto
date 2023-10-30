@@ -1,0 +1,46 @@
+ntax = "proto3";
+
+option csharp_namespace = "KreontaEdgeService.GRPC";
+
+
+service WebServiceService {
+  rpc GetAllWebServices (EmptyGetAllWebServiceRequest) returns (WebServiceList);
+  rpc FindWebServiceById (FindWebServiceByIdRequest) returns (WebServiceData);
+  rpc UpdateWebService (UpdateWebServiceRequest) returns (UpdateWebServiceResponse);
+}
+message WebServiceData {
+  string id = 1;
+  string name = 2;
+  int32 delay = 3;
+  bool bundle = 4;
+  bool keep_sequence = 5;
+  int32 retry_count = 6;
+  int32 retry_delay = 7;
+  int32 history_hours = 8;
+  bool enabled = 9;
+  bool instant = 10;
+  string destination_id = 11;
+  string web_service_group_id = 12;
+  repeated string element_id = 13;
+  repeated string call_id = 14;
+}
+
+
+message UpdateWebServiceRequest {
+  WebServiceData web_service = 1;
+}
+
+message WebServiceList {
+  repeated WebServiceData web_services = 1;
+}
+
+message EmptyGetAllWebServiceRequest {}
+
+message FindWebServiceByIdRequest {
+  string id = 1;
+}
+
+message UpdateWebServiceResponse {
+  bool success = 1;
+  string message = 2;
+}
