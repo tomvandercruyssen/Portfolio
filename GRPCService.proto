@@ -1,0 +1,140 @@
+// Dit is de controller klasse voor gRPC voor mijn bachelorproef, hangt samen met GRPCwebservice.proto
+
+using Dapper;
+using Grpc.Core;
+using KreontaEdgeService.Services;
+using MySql.Data.MySqlClient;
+using SharedLib.Data;
+using SharedLib.DTO;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+
+namespace KreontaEdgeService.GRPC.Services
+{
+    public class WebServiceController : WebServiceService.WebServiceServiceBase
+    {
+        private readonly DataTransmissionProcessService _dtps;
+        private readonly LoggingService _logger;
+        private readonly string conn = new ConnectionString()._connectionString;
+
+
+        public WebServiceController(DataTransmissionProcessService dtps, LoggingService logger)
+        {
+            _logger = logger;
+            _dtps = dtps;
+        }
+        public override Task<WebServiceList> GetAllWebServices(EmptyGetAllWebServiceRequest request, ServerCallContext context)
+        {
+            try
+            {
+                using MySqlConnection mConnection = new(conn);
+
+                List<WebService> WebServices = mConnection.Query<WebService>(@"Select * from WebService;").ToList();
+                WebServiceList response = new();
+                foreach (WebService ws in WebServices)
+                {
+                    KreontaEdgeService.GRPC.WebServiceData grpcWs = new KreontaEdgeService.GRPC.WebServiceData
+                    {
+                        Id = ws.WebServiceId,
+                        Name = ws.Name
+                    };
+
+                    response.WebServices.Add(grpcWs);
+                }
+                return Task.FromResult(response);
+            }
+            catch (Exception e)
+            {
+                throw new RpcException(new Status(StatusCode.Internal, e.Message));
+            }
+        }
+        public override Task<WebServiceData> FindWebServiceById(FindWebServiceByIdRequest request, ServerCallContext context)
+        {
+            try
+            {
+                using MySqlConnection mConnection = new(conn);
+
+                WebServiceData webService = mConnection.Query<WebServiceData>(@"Select * from WebService where WebServiceId = '" + request.Id.ToString() + "';").FirstOrDefault();
+                if (webService == null)
+                {
+                    throw new RpcException(new Status(StatusCode.NotFound, "Web service not found"));
+                }
+                return Task.FromResult(webService);
+            }
+            catch (Exception e)
+            {
+                throw new RpcException(new Status(StatusCode.Internal, e.Message));
+            }
+        }
+
+        public override async Task<UpdateWebServiceResponse> UpdateWebService(UpdateWebServiceRequest request, ServerCallContext context)
+        {
+            try
+            {
+                WebServiceDTO req = new WebServiceDTO()
+                {
+                    WebServiceId = request.WebService.Id.ToString(),
+                    Name = request.WebService.Name,
+                    Delay = (uint)request.WebService.Delay,
+                    Bundle = request.WebService.Bundle,
+                    KeepSequence = request.WebService.KeepSequence,
+                    RetryCount = (uint)request.WebService.RetryCount,
+                    RetryDelay = (uint)request.WebService.RetryDelay,
+                    HistoryHours = (uint)request.WebService.HistoryHours,
+                    Enabled = request.WebService.Enabled,
+                    Instant = request.WebService.Instant,
+                    DestinationId = request.WebService.DestinationId,
+                    WebServiceGroupId = request.WebService.WebServiceGroupId,
+                    ElementIds = request.WebService.ElementId.ToList(),
+                    CallIds = request.WebService.CallId.ToList()
+                };
+
+                SharedLib.Data.WebService ws = req.FromDTO();
+                using (MySqlConnection mConnection = new MySqlConnection(conn))
+                {
+
+                    Destination dest = mConnection.Query<Destination>(@"Select * from Destination where DestinationId = '" + req.DestinationId + "';").FirstOrDefault();
+                    WebServiceGroup grp = mConnection.Query<WebServiceGroup>(@"Select * from WebServiceGroup where WebServiceGroupId = '" + req.WebServiceGroupId + "';").FirstOrDefault();
+                    if (dest is null)
+                    {
+                        throw new RpcException(new Status(StatusCode.InvalidArgument, "No destination was found with the given id"));
+                    }
+                    ws.Destination = dest;
+                    if (grp is null)
+                    {
+                        throw new RpcException(new Status(StatusCode.InvalidArgument, "No group was found with the given id"));
+                    }
+                    ws.Group = grp;
+                    int rowsAffected = mConnection.Execute(@"UPDATE webservice SET Name = @Name, Delay = @Delay, Bundle = @Bundle, KeepSequence = @KeepSequence, RetryCount = @RetryCount
+                                    , RetryDelay = @RetryDelay, HistoryHours = @HistoryHours, Enabled = @Enabled, Instant = @Instant, DestinationId = @DestinationId, WebServiceGroupId = @WebServiceGroupId WHERE WebServiceId = @WebServiceId;",
+                        new { ws.Name, ws.Delay, ws.Bundle, ws.KeepSequence, ws.RetryCount, ws.RetryDelay, ws.HistoryHours, ws.Enabled, ws.Instant, ws.Destination.DestinationId, ws.Group.WebServiceGroupId, ws.WebServiceId });
+                    if (rowsAffected == 0)
+                    {
+                        //mConnection.Execute(@"UPDATE globalconfig SET Value = " + req.Value + " WHERE WebServiceId = '" + ws.WebServiceId + "';");
+                        mConnection.Execute(@"INSERT INTO WebService (WebServiceId, Name, Delay, Bundle, KeepSequence, RetryCount, RetryDelay, HistoryHours, Enabled, Instant, DestinationId, WebServiceGroupId)
+                        VALUES (@WebServiceId, @Name, @Delay, @Bundle, @KeepSequence, @RetryCount, @RetryDelay, @HistoryHours, @Enabled, @Instant,  @DestinationId, @WebServiceGroupId);",
+                            new { ws.WebServiceId, ws.Name, ws.Delay, ws.Bundle, ws.KeepSequence, ws.RetryCount, ws.RetryDelay, ws.HistoryHours, ws.Enabled, ws.Instant, ws.Destination.DestinationId, ws.Group.WebServiceGroupId });
+                    }
+                    _dtps.UpdateTimer(Guid.Parse(ws.WebServiceId));
+                    return new UpdateWebServiceResponse { Success = true, Message = "webservice aangemaakt"};
+                }
+            }
+            catch (RpcException ex)
+            {
+                throw;
+            }
+            catch (AggregateException e)
+            {
+                throw new RpcException(new Status(StatusCode.Internal, e.InnerException.Message));
+            }
+            catch (Exception e)
+            {
+                throw new RpcException(new Status(StatusCode.Internal, e.Message));
+            }
+        }
+
+
+    }
+}
